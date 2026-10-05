@@ -50,6 +50,62 @@ GitHub Actions: .github/workflows/run-agent.yml
 `AGENT_TIMEOUT`, `AGENT_CRASH`, `AGENT_NONZERO_EXIT`, `WORKER_INTERNAL`,
 `ISOLATION_UNSUPPORTED`.
 
+### Отмена и workflow без отчёта
+
+GitHub [cancel workflow run](https://docs.github.com/en/rest/actions/workflow-runs#cancel-a-workflow-run)
+HTTP202 подтверждает запрос, не выход процесса. Пока завершение не наблюдалось,
+`/cancel` возвращает `rejected / cancel_pending`; статус остаётся nonterminal,
+`/result` — 409. Неизвестный исход dispatch также не считается отменой.
+
+`/status` и `/result` сверяют завершение закреплённого GitHub run и его единственного
+job `run` через [attempt jobs API](https://docs.github.com/en/rest/actions/workflow-jobs#list-jobs-for-a-workflow-run-attempt).
+Проверяются repo, workflow, ref при наличии, event, run ID и attempt 1; неизвестные,
+неполные, неоднозначные и in-progress ответы не завершают run. Completion metadata
+сохраняются в `completionObservation`, без токенов и без расширения wire-контракта.
+
+Завершённый workflow без claim/report, включая zero-step failure/cancelled,
+становится non-retryable `WORKFLOW_ENDED_WITHOUT_REPORT / startup_failure`.
+Claimed run может стать `cancelled` только после завершения job и наблюдения
+начавшегося шага `Run agent`. Это всё ещё не доказательство выхода процесса:
+`pid`, `exitCode`, `exitSignal` остаются null, поэтому Runner сохраняет
+`exitObserved:false`. CP stop нельзя считать подтверждённым по этой информации.
+Claimed run с zero-step GHA job остаётся nonterminal: claim может принадлежать
+альтернативному recovery host. Настоящий сохранённый report всегда имеет приоритет.
+
+Не активировать orphan reconciliation, пока оператор готовит sole-claim recovery
+уже принятого unclaimed run: новые status/result запросы могут завершить такой
+workflow как infra failure. Source-ветка не изменяет существующий deployment;
+необходим отдельный согласованный cutover после recovery.
+
+### CLI graceful cancellation
+
+CLI ловит host SIGINT/SIGTERM, передаёт отмену в `runAgent`, посылает TERM всей
+detached process group и через 1 секунду эскалирует до KILL. Для enforced Unix
+identity используется bounded `sudo -n /bin/kill` с минимальным env. Прежний
+timeout grace остаётся 5 секунд. Результат отмены строится только после actual
+child `close`, с наблюдёнными code/signal; pre-spawn cancellation не создаёт exit
+proof. Listener/timer cleanup выполняется после lifecycle cleanup.
+
+Cancelled path сразу отправляет один report, без artifact publication/GCS ожидания;
+report ограничен 2 секундами и запрещает redirects. Потерянный ACK не приводит к
+повторному POST с другим результатом. Workflow entry использует `exec node`,
+чтобы [GitHub cancellation signals](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-cancellation)
+доходили до CLI, а не только до bash wrapper.
+
+Offline tests запускают настоящий CLI и process group, только с локальным synthetic
+claim/report server и stub clone; проверяют actual code 23, KILL при игнорировании
+TERM, завершение descendants, repeated signals, single report после lost ACK и
+отсутствие host credentials в agent env. Это не live GHA STOP acceptance и не
+основание включать CP stop gate без отдельного согласованного доказательства.
+
+Cancellation/private-stdin composition основана на `c8d7f9a`: включает private config
+spool/fail-closed answer changes `cc85c3b` и эквивалентные изменения Bohr
+`04bb28a`/`9164efe`. `identity.ts`, `private-launch.ts`, config installer и их tests
+сохранены без изменений. Merge в `exec.ts` сохраняет `stdin` payload, piped fd0 и
+его закрытие; cancellation listeners остаются привязаны к actual child close.
+Полная offline suite: 270 PASS, включая передачу private credential без argv,
+пустой stdin агента и single report после реального cancellation close.
+
 ## Что проверено на настоящем прогоне
 
 Прогон `37214618976`, 04.10.2026 — полный цикл от `POST /v1/launch` до `LaunchResult`:
