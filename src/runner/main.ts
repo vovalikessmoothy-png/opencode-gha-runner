@@ -20,12 +20,11 @@
  */
 
 import { execFile } from 'node:child_process';
-import { readFileSync } from 'node:fs';
 import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
-import { REPORT_PATH, type ClaimPayload } from '../claim.js';
+import { claimRequestHeaders, isSecureClaimUrl, REPORT_PATH, type ClaimPayload } from '../claim.js';
 import {
   clampTimeout,
   failure,
@@ -35,18 +34,23 @@ import {
   type Failure,
   type LaunchRequest,
   type LaunchResult,
+  type OutputSpec,
 } from '../contracts.js';
 import { GitHubRepoApi, NULL_SHA, buildManifest, collectArtifacts, type CollectResult } from './artifacts.js';
 import { resolveAgentEnv, runAgent, type ExecOutcome } from './exec.js';
 import { createRunIdentity, destroyRunIdentity, isBinaryAvailable, runUnderIdentity, type Identity } from './identity.js';
 import { installAgentConfigUnderIdentity } from './agent-config.js';
 import { uploadSessionLog, type LogUploadMode } from './logs.js';
+import { agentOutputFormat, extractAnswer } from './answer.js';
+import { buildAgentArgs, declaredOutputFailure } from './finalization.js';
 
 const exec = promisify(execFile);
 
 export interface RunnerEnv {
   GATEWAY_URL: string;
   CLAIM_TOKEN: string;
+  REQUIRE_CLAIM_AUTH?: string;
+  CLAIM_AUTH_TOKEN?: string;
   RUN_ID: string;
   /** Токен для клона `repository.fullName` и пуша артефактов. `GITHUB_TOKEN` джобы не годится. */
   ARTIFACTS_TOKEN?: string;
@@ -57,6 +61,7 @@ export interface RunnerEnv {
   WORKSPACE_ROOT?: string;
   /** Дополнительные флаги агенту (модель и т.п.), через пробел. */
   AGENT_ARGS?: string;
+  AGENT_OUTPUT_FORMAT?: string;
   /** `false` — запретить sudo, чтобы прогнать приёмку без создания пользователей. */
   ALLOW_SUDO?: string;
   /** `skip` — не ставить конфиг провайдера (агент уже сконфигурирован в репозитории). */
@@ -279,7 +284,7 @@ interface RepoRef {
  * Неудача пуша не фатальна: она уходит в `stderr` ответа, потому что ран-то отработал,
  * и наш API должен увидеть его итог, а не потерять из-за проблемы с git.
  */
-async function publishArtifacts(options: {
+export async function publishArtifacts(options: {
   spec: LaunchRequest;
   runId: string;
   workspace: string;
@@ -287,20 +292,13 @@ async function publishArtifacts(options: {
   collected: CollectResult;
   outcome: ExecOutcome;
   startedAt: Date;
-  sessionLog: SessionLog;
+  sessionLog: Pick<SessionLog, 'append'>;
 }): Promise<{ artifactRefs: ArtifactRef[]; repo: RepoRef; note: string | null }> {
-  const { spec, runId, workspace, token, collected, outcome, startedAt, sessionLog } = options;
+  const { spec, runId, token, collected, outcome, startedAt, sessionLog } = options;
   const fallback: RepoRef = { fullName: spec.repository.fullName, branch: spec.repository.branch, commit: NULL_SHA };
 
-  const files: Array<{ path: string; content: Buffer }> = [];
-  for (const artifact of collected.artifacts) {
-    const source = path.resolve(workspace, artifact.path.replace(/^artifacts\//, ''));
-    try {
-      files.push({ path: artifact.path, content: readFileSync(source) });
-    } catch {
-      logLine(`declared output vanished before push: ${artifact.path}`);
-    }
-  }
+  const files = [...collected.files];
+  const availableArtifacts = collected.artifacts;
   // Манифест кладём всегда: результат должен читаться из ветки, даже если выходов нет.
   files.push({
     path: 'artifacts/run-manifest.json',
@@ -310,7 +308,7 @@ async function publishArtifacts(options: {
       exitReason: outcome.exitReason,
       exitCode: outcome.exitCode,
       durationMs: outcome.durationMs,
-      artifacts: collected.artifacts,
+      artifacts: availableArtifacts,
       missingOutputs: collected.missing,
       startedAt: startedAt.toISOString(),
       finishedAt: new Date().toISOString(),
@@ -328,7 +326,7 @@ async function publishArtifacts(options: {
       `\npushed ${pushed.pushed.length} file(s) to ${pushed.fullName}@${pushed.branch} @ ${pushed.commit}\n`,
     );
     return {
-      artifactRefs: collected.artifacts,
+      artifactRefs: availableArtifacts,
       repo: { fullName: pushed.fullName, branch: pushed.branch, commit: pushed.commit },
       note: null,
     };
@@ -352,8 +350,14 @@ export function buildLaunchResult(input: {
   logUrl: string;
   outputTruncated: boolean;
   failure?: Failure;
+  outputs?: OutputSpec[];
+  missingOutputs?: string[];
+  publicationFailed?: boolean;
 }): LaunchResult {
-  const { outcome } = input;
+  const outputFailure = input.outcome.exitReason === 'completed' ? declaredOutputFailure(input.outputs, {
+    missing: input.missingOutputs ?? [], artifacts: input.artifacts, commit: input.repo.commit, failed: input.publicationFailed ?? false,
+  }) : undefined;
+  const outcome = outputFailure ? { ...input.outcome, exitReason: 'nonzero_exit' as const } : input.outcome;
   return {
     runId: input.runId,
     // `started` — движок отработал (в том числе с ненулевым кодом или таймаутом).
@@ -376,7 +380,7 @@ export function buildLaunchResult(input: {
     artifacts: input.artifacts,
     logUrl: input.logUrl,
     repo: input.repo,
-    ...(input.failure ? { failure: input.failure } : {}),
+    ...(input.failure ?? outputFailure ? { failure: input.failure ?? outputFailure } : {}),
   };
 }
 
@@ -388,6 +392,15 @@ export async function main(env: RunnerEnv = process.env as unknown as RunnerEnv)
     logLine('missing GATEWAY_URL / RUN_ID / CLAIM_TOKEN — nothing to claim');
     return RUNNER_EXIT.badEnv;
   }
+  const claimAuthToken = env.CLAIM_AUTH_TOKEN?.trim();
+  if (env.REQUIRE_CLAIM_AUTH === 'true' && !claimAuthToken) {
+    logLine('required claim authentication is unconfigured');
+    return RUNNER_EXIT.badEnv;
+  }
+  if (claimAuthToken && !isSecureClaimUrl(gatewayUrl)) {
+    logLine('host-authenticated claim requires HTTPS without URL credentials');
+    return RUNNER_EXIT.badEnv;
+  }
 
   const sessionLog = new SessionLog();
   let claim: ClaimPayload | null = null;
@@ -397,11 +410,12 @@ export async function main(env: RunnerEnv = process.env as unknown as RunnerEnv)
     // ── 1. claim ──────────────────────────────────────────────────────────────
     const claimResponse = await fetch(`${gatewayUrl}/v1/claim`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${claimToken}`, 'content-type': 'application/json' },
+      redirect: 'error',
+      headers: claimRequestHeaders(claimToken, claimAuthToken),
       body: JSON.stringify({ runId }),
     });
     if (!claimResponse.ok) {
-      const text = redact(await claimResponse.text(), claimToken).slice(0, 300);
+      const text = redact(await claimResponse.text(), claimToken, claimAuthToken).slice(0, 300);
       logLine(`claim failed (${claimResponse.status}): ${text}`);
       // Отчитаться нечем: report-токен выдаётся только после успешного claim'а.
       // Наш API увидит `dispatched` без результата и разберётся по таймауту опроса.
@@ -413,7 +427,7 @@ export async function main(env: RunnerEnv = process.env as unknown as RunnerEnv)
     // Локальная копия: в замыкании narrowing по `claim` не работает.
     const reportToken = claim.reportToken;
     const mcpSecrets = spec.mcpSecrets ?? {};
-    const secrets = [claim.llmKey, env.ARTIFACTS_TOKEN, ...Object.values(mcpSecrets)];
+    const secrets = [claim.llmKey, env.ARTIFACTS_TOKEN, claimAuthToken, ...Object.values(mcpSecrets)];
 
     logLine(`claimed job=${spec.jobId} timeout=${spec.limits.timeoutMs}ms outputs=${spec.outputs?.length ?? 0}`);
 
@@ -491,9 +505,9 @@ export async function main(env: RunnerEnv = process.env as unknown as RunnerEnv)
       injectedSecrets: mcpSecrets,
     });
     const extraArgs = (env.AGENT_ARGS ?? '').split(' ').filter(Boolean);
-    const agentArgs = [...extraArgs, 'run', spec.input.inlinePrompt];
+    const agentArgs = buildAgentArgs(extraArgs, spec.input.inlinePrompt, spec.outputs, env.AGENT_OUTPUT_FORMAT);
     // Промпт в лог не пишем: он может содержать секреты, а лог уезжает в GCS.
-    sessionLog.append('stdout', `\n$ ${claim.agentBinary} ${extraArgs.join(' ')} run <prompt>\n`);
+    sessionLog.append('stdout', `\n$ ${claim.agentBinary} ${agentArgs.slice(0, -1).join(' ')} <prompt>\n`);
 
     const outcome = await runAgent({
       identity,
@@ -542,7 +556,8 @@ export async function main(env: RunnerEnv = process.env as unknown as RunnerEnv)
     }
 
     // ── 7. ответ нашему API ────────────────────────────────────────────────────
-    const answer = extractAnswer(workspace, outcome.stdout);
+    const answer = extractAnswer(workspace, outcome.stdout, agentOutputFormat(agentArgs.slice(0, -1)));
+    const engineFailure = failureForOutcome(outcome.exitReason, collected.missing);
     const result = buildLaunchResult({
       runId,
       outcome,
@@ -551,12 +566,15 @@ export async function main(env: RunnerEnv = process.env as unknown as RunnerEnv)
       repo: published.repo,
       logUrl,
       outputTruncated: outcome.outputTruncated || logTruncated,
-      failure: failureForOutcome(outcome.exitReason, collected.missing),
+      failure: engineFailure,
+      outputs: spec.outputs,
+      missingOutputs: collected.missing,
+      publicationFailed: published.note !== null,
     });
     await report(reportUrl, claim.reportToken, result);
-    return outcome.exitReason === 'completed' ? RUNNER_EXIT.ok : RUNNER_EXIT.agentFailed;
+    return result.exitReason === 'completed' ? RUNNER_EXIT.ok : RUNNER_EXIT.agentFailed;
   } catch (cause) {
-    const safeSummary = redact(cause instanceof Error ? cause.message : String(cause), claim?.llmKey);
+    const safeSummary = redact(cause instanceof Error ? cause.message : String(cause), claim?.llmKey, claimToken, claimAuthToken);
     logLine(`runner crashed: ${safeSummary}`);
     if (claim) {
       await report(
@@ -592,26 +610,6 @@ function failureForOutcome(
     );
   }
   return undefined;
-}
-
-/**
- * Ответ агента: сначала файл (`.agent/answer.txt` или `answer.txt`), иначе хвост stdout.
- * Файл приоритетнее — stdout может быть перемешан логами установки пакетов.
- */
-function extractAnswer(
-  workspace: string,
-  stdout: string,
-): { text?: string; source: 'engine_stdout' | 'agent_file' | null } {
-  for (const candidate of ['.agent/answer.txt', 'answer.txt']) {
-    try {
-      const buffer = readFileSync(path.resolve(workspace, candidate));
-      if (buffer.length > 0) return { text: buffer.toString('utf8').trim(), source: 'agent_file' };
-    } catch {
-      // Нет файла — пробуем следующий кандидата.
-    }
-  }
-  const trimmed = stdout.trim();
-  return trimmed.length > 0 ? { text: trimmed, source: 'engine_stdout' } : { source: null };
 }
 
 const invokedDirectly =

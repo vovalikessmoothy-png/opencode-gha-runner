@@ -10,7 +10,9 @@
  */
 
 import { createHash } from 'node:crypto';
-import { readdir, readFile, realpath, stat } from 'node:fs/promises';
+import { constants, type Stats } from 'node:fs';
+import filesystem from 'node:fs/promises';
+import { readdir, readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import type { ArtifactRef, OutputSpec } from '../contracts.js';
 import { isSafeRelativePath } from '../contracts.js';
@@ -19,6 +21,7 @@ import { isSafeRelativePath } from '../contracts.js';
 
 export interface CollectResult {
   artifacts: ArtifactRef[];
+  files: Array<{ path: string; content: Buffer }>;
   /** Объявленные, но отсутствующие на диске — их absence не должна быть тихой. */
   missing: string[];
   /** Найденные, но не объявленные: попадают в манифест, но не считаются результатом. */
@@ -47,6 +50,45 @@ function guessMime(name: string, declared: string | undefined): string {
   return table[ext] ?? 'application/octet-stream';
 }
 
+function sameInode(selected: Stats, current: Stats): boolean {
+  return selected.dev === current.dev && selected.ino === current.ino;
+}
+
+export async function readConfinedArtifact(workspaceReal: string, absolute: string): Promise<Buffer> {
+  if (!isInside(workspaceReal, absolute)) throw new Error('Unsafe artifact path');
+  const parents: Array<{ path: string; selected: Stats }> = [];
+  let parent = workspaceReal;
+  for (const segment of ['', ...path.relative(workspaceReal, path.dirname(absolute)).split(path.sep).filter(Boolean)]) {
+    if (segment) parent = path.join(parent, segment);
+    const selected = await filesystem.lstat(parent);
+    if (!selected.isDirectory()) throw new Error('Unsafe artifact parent');
+    parents.push({ path: parent, selected });
+  }
+  const selected = await filesystem.lstat(absolute);
+  if (!selected.isFile()) throw new Error('Artifact is not a regular file');
+  const selectedReal = await filesystem.realpath(absolute);
+  if (!isInside(workspaceReal, selectedReal)) throw new Error('Unsafe artifact target');
+  const descriptor = await filesystem.open(absolute, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const opened = await descriptor.stat();
+    if (!opened.isFile() || !sameInode(selected, opened)) throw new Error('Artifact identity changed');
+    if (await filesystem.realpath(absolute) !== selectedReal) throw new Error('Artifact target changed');
+    for (const directory of parents) {
+      const current = await filesystem.lstat(directory.path);
+      if (!current.isDirectory() || !sameInode(directory.selected, current)) throw new Error('Artifact parent changed');
+    }
+    const current = await filesystem.lstat(absolute);
+    if (!current.isFile() || !sameInode(selected, current) || !sameInode(opened, current)) throw new Error('Artifact identity changed');
+    if (process.platform === 'linux') {
+      const openedReal = await filesystem.realpath(`/proc/self/fd/${descriptor.fd}`);
+      if (openedReal !== selectedReal || !isInside(workspaceReal, openedReal)) throw new Error('Unsafe opened artifact');
+    }
+    return await descriptor.readFile();
+  } finally {
+    await descriptor.close();
+  }
+}
+
 /**
  * Читает только объявленные выходы, и только по относительным путям внутри workspace.
  * Каждый путь проходит проверку на выход из каталога ещё до `readFile` — иначе
@@ -58,6 +100,7 @@ export async function collectArtifacts(
   readOnlyDirs: string[] = [],
 ): Promise<CollectResult> {
   const artifacts: ArtifactRef[] = [];
+  const files: CollectResult['files'] = [];
   const missing: string[] = [];
   const undeclared: string[] = [];
   const declared = outputs ?? [];
@@ -69,35 +112,22 @@ export async function collectArtifacts(
       missing.push(output.path);
       continue;
     }
-    const absolute = path.resolve(workspace, output.path);
-
-    let fileStat;
-    try {
-      fileStat = await stat(absolute);
-    } catch {
-      missing.push(output.path);
-      continue;
-    }
-    if (!fileStat.isFile()) {
-      missing.push(output.path);
-      continue;
-    }
-
-    // Сравниваем через `realpath` с обеих сторон: на macOS `/var` — симлинк в
-    // `/private/var`, и наивное сравнение строк дало бы ложное «путь снаружи».
-    // Симлинк наружу отсекается тем же сравнением — `real` уедет за пределы
-    // workspace, и это ровно тот класс проблемы, что и `..` в пути.
-    const real = await realpath(absolute).catch(() => absolute);
-    if (!isInside(workspaceReal, real)) {
-      missing.push(output.path);
-      continue;
-    }
+    const absolute = path.resolve(workspaceReal, output.path);
 
     // `name`/`mime` в контракте опциональны: выводим имя из последнего сегмента пути,
     // а MIME — по расширению. Так артефакт всегда описывается полностью, даже если
     // наш API прислал только `path`.
     const name = output.name ?? path.posix.basename(output.path);
-    const { sha256, size } = await sha256File(absolute);
+    let content: Buffer;
+    try {
+      content = await readConfinedArtifact(workspaceReal, absolute);
+    } catch {
+      missing.push(output.path);
+      continue;
+    }
+    const sha256 = createHash('sha256').update(content).digest('hex');
+    const size = content.length;
+    files.push({ path: `artifacts/${output.path}`, content });
     artifacts.push({
       path: `artifacts/${output.path}`,
       name,
@@ -123,7 +153,7 @@ export async function collectArtifacts(
     }
   }
 
-  return { artifacts, missing, undeclared };
+  return { artifacts, files, missing, undeclared };
 }
 
 async function realpathOrSelf(target: string): Promise<string> {
@@ -206,15 +236,18 @@ export class GitHubRepoApi {
 
   private async defaultBranchSha(): Promise<{ branch: string; sha: string } | null> {
     const repo = await this.request<{ default_branch?: string }>('GET', `/repos/${this.repo}`);
+    if (repo.status !== 200) throw new Error(`GitHub repository lookup HTTP ${repo.status}`);
     const branch = repo.data.default_branch;
     if (!branch) return null;
     const ref = await this.request<{ object?: { sha?: string } }>('GET', `/repos/${this.repo}/git/ref/heads/${branch}`);
+    if (ref.status !== 200 && ref.status !== 404) throw new Error(`GitHub base ref lookup HTTP ${ref.status}`);
     const sha = ref.data.object?.sha;
     return sha ? { branch, sha } : null;
   }
 
   private async branchSha(branch: string): Promise<string | null> {
     const ref = await this.request<{ object?: { sha?: string } }>('GET', `/repos/${this.repo}/git/ref/heads/${branch}`);
+    if (ref.status !== 200 && ref.status !== 404) throw new Error(`GitHub publication ref lookup HTTP ${ref.status}`);
     return ref.data.object?.sha ?? null;
   }
 
@@ -223,7 +256,8 @@ export class GitHubRepoApi {
       ref: `refs/heads/${branch}`,
       sha,
     });
-    return created.status === 201;
+    if (created.status !== 201) throw new Error(`GitHub branch creation HTTP ${created.status}`);
+    return true;
   }
 
   /** Публичная ссылка на файл в конкретной ветке. */
@@ -267,7 +301,7 @@ export class GitHubRepoApi {
         },
       );
       if (response.status !== 200 && response.status !== 201) {
-        throw new Error(`could not write ${file.path}: ${response.data.message ?? response.status}`);
+        throw new Error(`GitHub artifact write HTTP ${response.status}`);
       }
       pushed.push(file.path);
     }
@@ -281,9 +315,10 @@ export class GitHubRepoApi {
     }
 
     const head = await this.branchSha(options.branch);
+    if (!head) throw new Error('GitHub publication commit could not be verified');
     return {
       fullName: this.repo,
-      commit: head ?? NULL_SHA,
+      commit: head,
       branch: options.branch,
       ...(base ? { baseRef: base.branch } : {}),
       pushed,

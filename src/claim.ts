@@ -43,6 +43,23 @@ export interface ClaimErrorBody {
 
 export const CLAIM_PATH = '/v1/claim';
 
+export function isSecureClaimUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && url.hostname.length > 0 && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+
+export function claimRequestHeaders(claimToken: string, claimAuthToken?: string): Record<string, string> {
+  return {
+    authorization: `Bearer ${claimToken}`,
+    'content-type': 'application/json',
+    ...(claimAuthToken ? { 'x-claim-host-auth': `Bearer ${claimAuthToken}` } : {}),
+  };
+}
+
 // ── Маршруты контракта (их зовёт наш API) ──────────────────────────────────────
 /** `GET` — статус рана. */
 export const STATUS_PATH = (runId: string): string => `/v1/runs/${encodeURIComponent(runId)}/status`;
