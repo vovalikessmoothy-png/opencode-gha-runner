@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "runId": "run_4ed29ccd-0ddf-4a7a-844d-ab63c281cc22",
+  "jobId": "job_8091a5d4-f2d9-433d-87d4-449d09e82efa",
+  "exitReason": "nonzero_exit",
+  "exitCode": 1,
+  "durationMs": 3239,
+  "artifacts": [],
+  "missingOutputs": [],
+  "startedAt": "2026-10-06T10:40:20.887Z",
+  "finishedAt": "2026-10-06T10:41:09.905Z"
+}
