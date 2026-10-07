@@ -618,10 +618,6 @@ export async function main(env: RunnerEnv = process.env as unknown as RunnerEnv)
       for (const artifact of changes.artifacts) byPath.set(artifact.path, artifact);
       collected.artifacts = [...byPath.values()];
       profileDeletes = changes.deletes;
-      profileChanges = {
-        files: changes.artifacts.map((entry) => ({ path: entry.path.replace(/^artifacts\//, ''), sha256: entry.sha256, size: entry.size })),
-        deletes: changes.deletes,
-      };
       try {
         await uploadProfileChanges({
           spec,
@@ -629,6 +625,12 @@ export async function main(env: RunnerEnv = process.env as unknown as RunnerEnv)
           identity,
           files: changes.artifacts.map((entry) => ({ path: entry.path, sha256: entry.sha256, size: entry.size })),
         });
+        // Only attest the complete manifest after every file is durably accepted by
+        // the API. A partial upload must never authorize deletion or publication.
+        profileChanges = {
+          files: changes.artifacts.map((entry) => ({ path: entry.path.replace(/^artifacts\//, ''), sha256: entry.sha256, size: entry.size })),
+          deletes: changes.deletes,
+        };
       } catch (cause) {
         const summary = redact(cause instanceof Error ? cause.message : String(cause), spec.profileWorkspace.savebackToken);
         logLine(`profile saveback failed: ${summary}`);
@@ -696,7 +698,6 @@ export async function main(env: RunnerEnv = process.env as unknown as RunnerEnv)
         claim.reportToken,
         emptyResult(runId, claim.spec.repository, {
           ...(agentAttempted && claim.spec.profileWorkspace ? { status: 'started' } : {}),
-          ...(claim.spec.profileWorkspace ? { profileChanges: { files: [], deletes: [] } } : {}),
           failure: failure('WORKER_INTERNAL', 'finalization', safeSummary),
           stderr: safeSummary,
         }),
