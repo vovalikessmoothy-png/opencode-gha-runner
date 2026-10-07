@@ -519,10 +519,7 @@ export async function main(env: RunnerEnv = process.env as unknown as RunnerEnv)
      * и однажды его забудут.
      */
     const refuse = async (f: Failure, exit: number): Promise<number> => {
-      await report(reportUrl, reportToken, emptyResult(runId, spec.repository, {
-        failure: f,
-        ...(spec.profileWorkspace ? { profileChanges: { files: [], deletes: [] } } : {}),
-      }));
+      await report(reportUrl, reportToken, emptyResult(runId, spec.repository, { failure: f }));
       return exit;
     };
 
@@ -619,18 +616,15 @@ export async function main(env: RunnerEnv = process.env as unknown as RunnerEnv)
       collected.artifacts = [...byPath.values()];
       profileDeletes = changes.deletes;
       try {
-        await uploadProfileChanges({
+        // Only attest the complete manifest after every file is durably accepted by
+        // the API. A partial upload must never authorize deletion or publication.
+        profileChanges = await uploadProfileChanges({
           spec,
           workspace,
           identity,
           files: changes.artifacts.map((entry) => ({ path: entry.path, sha256: entry.sha256, size: entry.size })),
-        });
-        // Only attest the complete manifest after every file is durably accepted by
-        // the API. A partial upload must never authorize deletion or publication.
-        profileChanges = {
-          files: changes.artifacts.map((entry) => ({ path: entry.path.replace(/^artifacts\//, ''), sha256: entry.sha256, size: entry.size })),
           deletes: changes.deletes,
-        };
+        });
       } catch (cause) {
         const summary = redact(cause instanceof Error ? cause.message : String(cause), spec.profileWorkspace.savebackToken);
         logLine(`profile saveback failed: ${summary}`);

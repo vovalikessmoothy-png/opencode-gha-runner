@@ -1,10 +1,41 @@
-import { createHash } from 'node:crypto';
-import { mkdir, readFile, realpath, readdir, lstat, writeFile, chmod, rm } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { chmod, copyFile, lstat, mkdir, mkdtemp, readFile, realpath, readdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import { isSafeRelativePath, type LaunchRequest } from '../contracts.js';
 import { runUnderIdentity, type Identity } from './identity.js';
 
+const exec = promisify(execFile);
 const MAX_SNAPSHOT_BYTES = 512 * 1024 * 1024;
+
+export interface ProfileChangesManifest {
+  files: Array<{ path: string; sha256: string; size: number }>;
+  deletes: string[];
+}
+
+/** Put archive bytes where only this run identity can read them. */
+export async function stageSnapshotArchive(source: string, workspace: string, identity: Identity): Promise<string> {
+  const destination = path.join(workspace, `.profile-snapshot-${randomUUID()}.tar.gz`);
+  try {
+    if (identity.enforced) {
+      await exec('sudo', ['install', '-m', '0600', '-o', String(identity.uid), '-g', String(identity.gid), source, destination]);
+    } else {
+      if (identity.uid !== (process.getuid?.() ?? identity.uid)) throw new Error('cannot securely stage snapshot for a different unenforced identity');
+      await copyFile(source, destination);
+      await chmod(destination, 0o600);
+    }
+    const stat = await lstat(destination);
+    if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0) throw new Error('profile snapshot archive permissions are not private');
+    if (identity.enforced && stat.uid !== identity.uid) throw new Error('profile snapshot archive is not owned by the run identity');
+    return destination;
+  } catch (cause) {
+    if (identity.enforced) await exec('sudo', ['rm', '-f', destination]).catch(() => undefined);
+    else await rm(destination, { force: true });
+    throw cause;
+  }
+}
 
 /** Download, authenticate and safely materialize the API-owned snapshot for one run. */
 export async function materializeProfileSnapshot(
@@ -49,11 +80,14 @@ export async function materializeProfileSnapshot(
   const digest = createHash('sha256').update(bytes).digest('hex');
   if (digest !== profile.snapshotSha256) throw new Error('profile snapshot checksum mismatch');
 
-  const archive = path.join(path.dirname(workspace), `${path.basename(workspace)}.snapshot.tar.gz`);
   await mkdir(workspace, { recursive: true, mode: 0o750 });
-  await writeFile(archive, bytes, { mode: 0o600 });
-  await chmod(archive, 0o644);
+  const stagingDirectory = await mkdtemp(path.join(tmpdir(), 'profile-snapshot-'));
+  const sourceArchive = path.join(stagingDirectory, 'snapshot.tar.gz');
+  let privateArchive: string | undefined;
   try {
+    await writeFile(sourceArchive, bytes, { mode: 0o600 });
+    const archive = await stageSnapshotArchive(sourceArchive, workspace, identity);
+    privateArchive = archive;
     // Validate names before extraction, then reject links/devices before tar can create them.
     const names = await runUnderIdentity(identity, 'tar', ['-tzf', archive], { PATH: process.env['PATH'] ?? '/usr/bin:/bin' });
     const entries = names.stdout.split('\n').filter(Boolean);
@@ -71,6 +105,7 @@ export async function materializeProfileSnapshot(
     await runUnderIdentity(identity, 'tar', [
       '-xzf', archive, '-C', workspace, '--no-same-owner', '--no-same-permissions',
     ], { PATH: process.env['PATH'] ?? '/usr/bin:/bin' });
+    await runUnderIdentity(identity, 'rm', ['-f', archive], { PATH: process.env['PATH'] ?? '/usr/bin:/bin' });
 
     // Ensure the extracted tree contains only regular files/directories and no links escaped.
     const root = await realpath(workspace);
@@ -101,7 +136,9 @@ export async function materializeProfileSnapshot(
     await runUnderIdentity(identity, 'git', ['-C', workspace, 'add', '-A'], { PATH: process.env['PATH'] ?? '/usr/bin:/bin', HOME: identity.home });
     await runUnderIdentity(identity, 'git', ['-C', workspace, '-c', 'user.name=Profile Snapshot', '-c', 'user.email=profile-snapshot@invalid', 'commit', '--quiet', '--allow-empty', '-m', 'API profile snapshot baseline'], { PATH: process.env['PATH'] ?? '/usr/bin:/bin', HOME: identity.home });
   } finally {
-    await rm(archive, { force: true });
+    if (privateArchive && identity.enforced) await exec('sudo', ['rm', '-f', privateArchive]).catch(() => undefined);
+    else if (privateArchive) await rm(privateArchive, { force: true });
+    await rm(stagingDirectory, { recursive: true, force: true });
   }
 }
 
@@ -110,17 +147,21 @@ export async function uploadProfileChanges(options: {
   workspace: string;
   identity: Identity;
   files: Array<{ path: string; sha256: string; size: number }>;
+  deletes: string[];
   fetchImpl?: typeof fetch;
-}): Promise<void> {
+}): Promise<ProfileChangesManifest> {
   const profile = options.spec.profileWorkspace;
   if (!profile) throw new Error('profile saveback requested for a non-profile run');
   const fetchImpl = options.fetchImpl ?? fetch;
-  let totalBytes = 0;
+  const declaredTotal = options.files.reduce((sum, file) => sum + file.size, 0);
+  if (options.files.some((file) => !Number.isSafeInteger(file.size) || file.size < 0 || file.size > 50 * 1024 * 1024)
+      || !Number.isSafeInteger(declaredTotal) || declaredTotal > 100 * 1024 * 1024) {
+    throw new Error('profile saveback exceeds API upload limits');
+  }
+  const uploaded: Array<{ path: string; sha256: string; size: number }> = [];
   for (const file of options.files) {
     const relative = file.path.replace(/^artifacts\//, '');
     if (!isSafeRelativePath(relative)) throw new Error(`unsafe profile saveback path: ${relative}`);
-    totalBytes += file.size;
-    if (file.size > 50 * 1024 * 1024 || totalBytes > 100 * 1024 * 1024) throw new Error('profile saveback exceeds API upload limits');
     const absolute = path.resolve(options.workspace, relative);
     const bytes = await readFile(absolute);
     const digest = createHash('sha256').update(bytes).digest('hex');
@@ -134,5 +175,7 @@ export async function uploadProfileChanges(options: {
       redirect: 'error',
     });
     if (!response.ok) throw new Error(`profile saveback upload failed (${response.status}) for ${relative}`);
+    uploaded.push({ path: relative, sha256: file.sha256, size: file.size });
   }
+  return { files: uploaded, deletes: options.deletes };
 }

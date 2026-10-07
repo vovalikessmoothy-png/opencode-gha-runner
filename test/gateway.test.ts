@@ -431,6 +431,25 @@ test('cancel живого рана гасит GitHub-прогон и делае�
   assert.equal(result.exitReason, 'cancelled');
 });
 
+test('cancelled profile run never returns a saveback manifest and clears its capability', async () => {
+  const h = harness();
+  const capability = 'run-scoped-saveback-token-1234567890';
+  await h.fetch(launch(spec({
+    profileWorkspace: {
+      bindingId: 'binding-a', snapshotUrl: 'https://storage.example/signed/snapshot', snapshotSha256: 'a'.repeat(64), snapshotSize: 1,
+      savebackUrl: 'https://api.example/v1/worker/launches/run/profile-changes', savebackToken: capability,
+      artifacts: [], excludedPatterns: [],
+    },
+  })));
+  await h.fetch(post(`/v1/runs/${RUN_ID}/cancel`, {}));
+  const result = (await (await h.fetch(get(`/v1/runs/${RUN_ID}/result`))).json()) as Record<string, unknown>;
+  assert.equal(result['exitReason'], 'cancelled');
+  assert.equal(result['profileChanges'], undefined, 'cancellation must not authorize writes or deletions');
+  const stored = await h.store.get(RUN_ID);
+  assert.equal(stored?.request.profileWorkspace, undefined);
+  assert.ok(!JSON.stringify(stored?.request).includes(capability));
+});
+
 test('cancel неизвестного рана — unknown_run', async () => {
   const h = harness();
   const response = await h.fetch(post('/v1/runs/run_нет/cancel', {}));
