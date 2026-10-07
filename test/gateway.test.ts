@@ -232,6 +232,25 @@ test('claim отдаёт токен публикации, и он вычищае
   assert.equal(stored?.request.publicationToken, undefined, 'токен публикации обязан уйти из записи рана');
 });
 
+test('profile saveback capability is removed from Gateway storage after completion', async () => {
+  const h = harness();
+  const capability = 'run-scoped-saveback-token-1234567890';
+  const signedUrl = 'https://storage.example/signed/profile-snapshot?signature=private';
+  await h.fetch(launch(spec({
+    profileWorkspace: {
+      bindingId: 'binding-a', snapshotUrl: signedUrl, snapshotSha256: 'a'.repeat(64), snapshotSize: 123,
+      savebackUrl: 'https://api.example/v1/worker/launches/run/profile-changes', savebackToken: capability,
+      artifacts: [], excludedPatterns: [],
+    },
+  })));
+  await finish(h);
+  const stored = await h.store.get(RUN_ID);
+  const serialized = JSON.stringify(stored?.request);
+  assert.equal(stored?.request.profileWorkspace, undefined);
+  assert.ok(!serialized.includes(capability));
+  assert.ok(!serialized.includes(signedUrl));
+});
+
 test('пустой токен публикации отвергается на входе, а не гоняет агента', async () => {
   const h = harness();
   const response = await h.fetch(launch(spec({ publicationToken: 'short' })));
