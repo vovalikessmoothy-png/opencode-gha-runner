@@ -9,6 +9,8 @@ already serves the main API.
 - Worker: `opencode-gha-runner-telegram-ux-sandbox`
 - KV binding `RUNS`: `ef2ef198077946ac8a8dc0721aff4e08`
 - Public base URL: `https://opencode-gha-runner-telegram-ux-sandbox.skillset-apply.workers.dev`
+- Private Actions repository: `vovalikessmoothy-png/opencode-gha-runner-telegram-ux-sandbox`
+- Private task/output fixture: `vovalikessmoothy-png/cp-telegram-ux-runner-sandbox`
 - Wrangler config: `wrangler.telegram-ux-sandbox.toml`
 
 The KV namespace was created in the trained-assist Cloudflare test account on
@@ -28,12 +30,12 @@ Do not copy the primary Worker's `WORKER_TOKEN`, `GITHUB_TOKEN`, or `RING_TARGET
 Keep `RING_TARGETS` unset so this sandbox uses the single repository configured
 in `[vars]`.
 
-The GHA workflow repository also needs a disposable test configuration: its
-workflow variables and `ARTIFACTS_TOKEN` are repository-scoped. Do not point this
-Worker at production artifacts, profile data, or a shared publication credential.
-The current dispatch workflow defaults log upload to GCS; set up an isolated test
-bucket/WIF or a sandbox-only workflow configured for local logs before executing a
-real Run.
+The private GHA workflow repository has sandbox-only `GATEWAY_URL` and
+`LOG_UPLOAD=local` variables. Its `ARTIFACTS_TOKEN` must be a fine-grained token
+limited to the private task/output fixture above; do not copy the primary workflow
+repo's publication secret or point at production artifacts/profile data. The gateway
+`GITHUB_TOKEN` must be separately limited to Actions read/write on the private
+workflow repository. Do not grant either token access to unrelated repositories.
 
 ## Deploy after credentials and workflow fixture exist
 
