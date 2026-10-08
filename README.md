@@ -44,7 +44,7 @@ GitHub Actions: .github/workflows/run-agent.yml
 | `POST` | `/v1/runs/{runId}/cancel` | `Bearer WORKER_TOKEN` | `200` `{runId, status, cancelled, reason}` |
 | `POST` | `/v1/claim` | `Bearer <claim_token>` | `200` `{runId, spec, llmKey, llmKeyEnvName, reportToken, reportUrl, agentBinary}` |
 | `POST` | `/v1/runs/{runId}/result` | `Bearer <report_token>` | `200` `{runId, status:"accepted"}` |
-| `GET` | `/healthz` | — | `200` `{ok, engine, repo, workflow}` |
+| `GET` | `/healthz` | — | `200` `{ok, engine, repo, workflow, buildId?, buildSha?, versionTimestamp?}` |
 
 Коды отказа — в `failure.code`: `AGENT_BINARY_MISSING`, `AGENT_STARTUP_FAILED`,
 `AGENT_TIMEOUT`, `AGENT_CRASH`, `AGENT_NONZERO_EXIT`, `WORKER_INTERNAL`,

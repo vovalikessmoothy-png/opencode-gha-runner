@@ -39,6 +39,7 @@ function harness(options: {
   /** Что вернёт `findRunSince` при неоднозначном отказе. `null` — прогона не появилось. */
   runAppeared?: { id: number } | null;
   deliveryStatus?: number;
+  versionMetadata?: GatewayConfig['versionMetadata'];
 } = {}): Harness {
   const store = new MemoryRunStore();
   const dispatched: Array<{ runId: string; claimToken: string }> = [];
@@ -69,7 +70,7 @@ function harness(options: {
   } as unknown as GitHubClient;
 
   const app = createGateway({
-    config,
+    config: { ...config, versionMetadata: options.versionMetadata },
     store,
     github,
     randomToken: () => {
@@ -377,6 +378,39 @@ test('healthz без авторизации', async () => {
   const response = await h.fetch(new Request('https://worker.example/healthz'));
   assert.equal(response.status, 200);
   assert.equal(response.headers.get('cache-control'), 'no-store');
+  assert.deepEqual(await response.json(), {
+    ok: true,
+    engine: 'dynamic-ip-azure-agent-run',
+    repo: 'vovalikessmoothy-png/opencode-gha-runner',
+    workflow: 'run-agent.yml',
+  });
+});
+
+test('healthz exposes only provider-owned version metadata and a validated source SHA', async () => {
+  const h = harness({ versionMetadata: {
+    id: 'cf-version-123',
+    tag: 'A'.repeat(40),
+    timestamp: '2026-10-08T12:00:00.000Z',
+  } });
+  const response = await h.fetch(new Request('https://worker.example/healthz'));
+  assert.deepEqual(await response.json(), {
+    ok: true,
+    engine: 'dynamic-ip-azure-agent-run',
+    repo: 'vovalikessmoothy-png/opencode-gha-runner',
+    workflow: 'run-agent.yml',
+    buildId: 'cf-version-123',
+    buildSha: 'a'.repeat(40),
+    versionTimestamp: '2026-10-08T12:00:00.000Z',
+  });
+});
+
+test('healthz omits malformed optional version metadata', async () => {
+  const h = harness({ versionMetadata: { id: 'x'.repeat(129), tag: 'branch-name', timestamp: 'x'.repeat(65) } });
+  const response = await h.fetch(new Request('https://worker.example/healthz'));
+  const body = await response.json() as Record<string, unknown>;
+  assert.equal('buildId' in body, false);
+  assert.equal('buildSha' in body, false);
+  assert.equal('versionTimestamp' in body, false);
 });
 
 test('claim отдаёт spec с ключом и гасит токен', async () => {

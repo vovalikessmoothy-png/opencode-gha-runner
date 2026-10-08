@@ -24,6 +24,8 @@ export interface Env {
   ZEN_RING_ADMIN_TOKEN?: string;
   /** Статическое кольцо `[{repo, token}]` — секрет, потому что в нём токены. */
   RING_TARGETS?: string;
+  /** Provider-owned immutable deployment metadata (Cloudflare Workers version binding). */
+  CF_VERSION_METADATA?: { id?: string; tag?: string; timestamp?: string };
 }
 
 export default {
@@ -43,6 +45,7 @@ export default {
         githubToken: env.GITHUB_TOKEN,
         zenRingUrl: env.ZEN_RING_URL,
         zenRingAdminToken: env.ZEN_RING_ADMIN_TOKEN,
+        versionMetadata: env.CF_VERSION_METADATA,
         // Статическое кольцо приходит **секретом**, а не переменной: в нём токены
         // репозиториев, а переменные воркера читаются в дашборде как обычный текст.
         ...(env.RING_TARGETS ? { ringTargets: parseRing(env.RING_TARGETS) } : {}),
