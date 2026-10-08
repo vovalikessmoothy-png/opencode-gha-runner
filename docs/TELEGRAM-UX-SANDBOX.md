@@ -20,15 +20,20 @@ The KV namespace was created in the trained-assist Cloudflare test account on
 
 Provision secrets only on this Worker, after the code is merged and reviewed:
 
-- `WORKER_TOKEN`: a new random primary credential for this isolated Worker.
-- `WORKER_TOKEN_TELEGRAM_UX`: a different random credential; provision the same
-  value as CP sandbox secret `RUNNER_API_KEY_TELEGRAM_UX`.
+- `WORKER_TOKEN`: a new random credential for the isolated Worker. The disposable
+  `trained-assist/ai-agent-runner` API uses the same value as
+  `EXTERNAL_WORKER_TOKEN` when it calls this Worker.
 - `GITHUB_TOKEN`: a fine-grained token limited to the selected Runner dispatch
   repository, with Actions read/write for dispatch, status lookup, and cancel.
 
+`WORKER_TOKEN_TELEGRAM_UX` is an optional second gateway credential; CP does not
+call this Worker directly, so do not pair it with CP's
+`RUNNER_API_KEY_TELEGRAM_UX`. CP authenticates to the Serverless Agent API, which
+then calls this Worker with `EXTERNAL_WORKER_TOKEN`.
+
 Do not copy the primary Worker's `WORKER_TOKEN`, `GITHUB_TOKEN`, or `RING_TARGETS`.
-Keep `RING_TARGETS` unset so this sandbox uses the single repository configured
-in `[vars]`.
+Keep `RING_TARGETS` unset so this sandbox uses the single private execution repo
+configured in `[vars]`.
 
 The private GHA workflow repository has sandbox-only `GATEWAY_URL` and
 `LOG_UPLOAD=local` variables. Its `ARTIFACTS_TOKEN` must be a fine-grained token
@@ -37,7 +42,7 @@ repo's publication secret or point at production artifacts/profile data. The gat
 `GITHUB_TOKEN` must be separately limited to Actions read/write on the private
 workflow repository. Do not grant either token access to unrelated repositories.
 
-## Deploy after credentials and workflow fixture exist
+## Deploy after credentials and API sandbox exist
 
 ```sh
 npm ci
@@ -46,8 +51,10 @@ npm run build
 npx wrangler deploy --config wrangler.telegram-ux-sandbox.toml
 ```
 
-Then set CP sandbox `RUNNER_API_URL` to the Worker URL and provision
-`RUNNER_API_KEY_TELEGRAM_UX`. Verify health and profile readiness, run one
-synthetic task, inspect its terminal callback and logs, then reconcile task/run
-state. This setup is not an end-to-end acceptance until the scenario evidence is
-recorded in architecture issue #190.
+Configure the isolated Serverless Agent API with this Worker URL and matching
+`EXTERNAL_WORKER_TOKEN`; the API key is a separate credential. CP sandbox
+`RUNNER_API_URL` must point to that API endpoint, and `RUNNER_API_KEY_TELEGRAM_UX`
+must be registered there for the Telegram UX principal. Verify health and profile
+readiness, run one synthetic task, inspect its terminal callback and logs, then
+reconcile task/run state. This setup is not an end-to-end acceptance until the
+scenario evidence is recorded in architecture issue #190.
