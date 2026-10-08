@@ -55,6 +55,8 @@ export interface GatewayConfig {
   zenRingUrl?: string;
   /** Админ-токен кольца: только им читается `/zen/ring/payload`. */
   zenRingAdminToken?: string;
+  /** Trusted Cloudflare version metadata; never copied from a launch request. */
+  versionMetadata?: { id?: string; tag?: string; timestamp?: string };
 }
 
 export interface GatewayDeps {
@@ -456,7 +458,23 @@ async function handleCancel(runId: string): Promise<Response> {
 
       try {
         if (request.method === 'GET' && (path === '/healthz' || path === '/')) {
-          return json({ ok: true, engine: ENGINE_NAME, repo: config.repo, workflow: config.workflow }, 200, noStore());
+          const metadata = config.versionMetadata;
+          const buildId = typeof metadata?.id === 'string' && metadata.id.length <= 128 ? metadata.id : undefined;
+          const buildSha = typeof metadata?.tag === 'string' && /^[a-f0-9]{40}$/i.test(metadata.tag)
+            ? metadata.tag.toLowerCase()
+            : undefined;
+          const versionTimestamp = typeof metadata?.timestamp === 'string' && metadata.timestamp.length <= 64
+            ? metadata.timestamp
+            : undefined;
+          return json({
+            ok: true,
+            engine: ENGINE_NAME,
+            repo: config.repo,
+            workflow: config.workflow,
+            ...(buildId ? { buildId } : {}),
+            ...(buildSha ? { buildSha } : {}),
+            ...(versionTimestamp ? { versionTimestamp } : {}),
+          }, 200, noStore());
         }
 
         if (request.method === 'POST' && path === '/v1/launch') {
