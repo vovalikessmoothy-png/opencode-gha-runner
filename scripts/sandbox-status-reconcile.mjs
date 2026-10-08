@@ -52,8 +52,18 @@ function listSandboxKeys() {
   return JSON.parse(listed);
 }
 
-function cleanupProbeKey() {
-  wrangler(['kv', 'key', 'delete', key, '--binding', 'RUNS'], undefined);
+async function cleanupProbeKey() {
+  let lastError;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      wrangler(['kv', 'key', 'delete', key, '--binding', 'RUNS'], undefined);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
+    }
+  }
+  throw lastError;
 }
 
 let seeded = false;
@@ -122,7 +132,7 @@ try {
   console.log(JSON.stringify({ githubRunId, conclusion: githubRun.conclusion, gatewayStatus: status.status, exitReason: result.exitReason, resultRunId: result.runId }, null, 2));
 } finally {
   if (seeded) {
-    try { cleanupProbeKey(); }
+    try { await cleanupProbeKey(); }
     catch (error) { console.error(`WARNING: remove sandbox KV key ${key} manually; cleanup failed: ${error.message}`); }
   }
   rmSync(tempDir, { recursive: true, force: true });
