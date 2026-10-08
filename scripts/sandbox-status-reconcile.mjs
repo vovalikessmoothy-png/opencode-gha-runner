@@ -52,18 +52,12 @@ function listSandboxKeys() {
   return JSON.parse(listed);
 }
 
-function cleanupProbeKeys() {
-  for (const entry of listSandboxKeys()) {
-    if (entry.name.startsWith('run:sandbox_probe_')) {
-      wrangler(['kv', 'key', 'delete', entry.name, '--binding', 'RUNS'], undefined);
-    }
-  }
+function cleanupProbeKey() {
+  wrangler(['kv', 'key', 'delete', key, '--binding', 'RUNS'], undefined);
 }
 
 let seeded = false;
 try {
-  // Recover leftovers from an interrupted earlier probe, limited to our own prefix.
-  cleanupProbeKeys();
   const record = {
     credentialId: 'primary',
     runId,
@@ -128,7 +122,7 @@ try {
   console.log(JSON.stringify({ githubRunId, conclusion: githubRun.conclusion, gatewayStatus: status.status, exitReason: result.exitReason, resultRunId: result.runId }, null, 2));
 } finally {
   if (seeded) {
-    try { cleanupProbeKeys(); }
+    try { cleanupProbeKey(); }
     catch (error) { console.error(`WARNING: remove sandbox KV key ${key} manually; cleanup failed: ${error.message}`); }
   }
   rmSync(tempDir, { recursive: true, force: true });
