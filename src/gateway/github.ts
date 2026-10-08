@@ -93,14 +93,15 @@ export class GitHubClient {
   }
 
   private async request<T>(method: string, path: string, body?: unknown): Promise<{ status: number; data: T }> {
+    const headers: Record<string, string> = {
+      ...JSON_HEADERS,
+      'x-github-api-version': '2022-11-28',
+      'user-agent': this.userAgent,
+    };
+    if (this.token) headers.authorization = `Bearer ${this.token}`;
     const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
       method,
-      headers: {
-        ...JSON_HEADERS,
-        authorization: `Bearer ${this.token}`,
-        'x-github-api-version': '2022-11-28',
-        'user-agent': this.userAgent,
-      },
+      headers,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
 
