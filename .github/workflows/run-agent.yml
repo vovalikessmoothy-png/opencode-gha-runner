@@ -65,13 +65,23 @@ jobs:
         with:
           version: '>= 363.0.0'
 
-      # Бинарь ставится до создания идентичности и делается world-readable, чтобы
-      # агент мог его исполнить под своим UID, но не мог переписать.
-      - name: Install opencode
+      # Install the same pinned MEM preview as the local user and France worker.
+      # Verify the immutable release asset before making it executable by the agent.
+      - name: Install OpenCode MEM preview
+        env:
+          OPENCODE_PREVIEW_TAG: mem-preview-20261013-a6c8f6632c9b
+          OPENCODE_PREVIEW_VERSION: 0.0.0-mem-preview.a6c8f6632c9b
+          OPENCODE_PREVIEW_SHA256: cf7b44cae53a5f3c6b9341690bfe94d1341b562a6179fe552987163fe963d6e5
         run: |
           set -euo pipefail
-          npm install -g opencode-ai --no-audit --no-fund
-          sudo chmod -R a+rX "$(npm root -g)"
+          binary="$RUNNER_TEMP/opencode"
+          curl --fail --location --retry 3 --retry-delay 1 \
+            "https://github.com/gpt-mem/opencode-mem/releases/download/${OPENCODE_PREVIEW_TAG}/opencode-linux-x64" \
+            --output "$binary"
+          echo "${OPENCODE_PREVIEW_SHA256}  ${binary}" | sha256sum --check --status
+          chmod 0755 "$binary"
+          sudo install -m 0755 "$binary" /usr/local/bin/opencode
+          test "$(opencode --version)" = "$OPENCODE_PREVIEW_VERSION"
           opencode --version
 
       - name: Run agent
