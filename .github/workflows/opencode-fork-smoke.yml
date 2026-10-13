@@ -1,0 +1,33 @@
+name: opencode-fork-smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-x64:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download and verify pinned OpenCode fork
+        env:
+          OPENCODE_RELEASE_TAG: mem-v20261013-native-trace-57ac57b7e9
+          OPENCODE_VERSION: 0.0.0-native-trace-57ac57b7e9-20261013
+          OPENCODE_SOURCE_SHA: 57ac57b7e9bcf755f0131fd04ab05b0b5c4bb653
+          OPENCODE_ARCHIVE_SHA256: d58da99bbd4d945820ed1b6f0ffca3f866a9aeb0dc9b52a23d8c48d40bee9034
+          OPENCODE_BINARY_SHA256: f9b4ba796afe49cc8c17d205d616ed03e93014dd8abf1fb1a1a35951c628d696
+        run: |
+          set -euo pipefail
+          asset="opencode-linux-x64.tar.gz"
+          curl --fail --location --silent --show-error \
+            "https://github.com/gpt-mem/opencode-mem/releases/download/${OPENCODE_RELEASE_TAG}/${asset}" \
+            --output "$RUNNER_TEMP/$asset"
+          echo "$OPENCODE_ARCHIVE_SHA256  $RUNNER_TEMP/$asset" | sha256sum --check --status
+          mkdir -p "$RUNNER_TEMP/opencode-fork"
+          tar -xzf "$RUNNER_TEMP/$asset" -C "$RUNNER_TEMP/opencode-fork"
+          test -x "$RUNNER_TEMP/opencode-fork/opencode"
+          echo "$OPENCODE_BINARY_SHA256  $RUNNER_TEMP/opencode-fork/opencode" | sha256sum --check --status
+          version="$("$RUNNER_TEMP/opencode-fork/opencode" --version)"
+          test "$version" = "$OPENCODE_VERSION"
+          echo "OpenCode Linux x64 smoke passed: version=$version source=$OPENCODE_SOURCE_SHA sha256=$OPENCODE_BINARY_SHA256" >> "$GITHUB_STEP_SUMMARY"
