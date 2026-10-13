@@ -1,6 +1,8 @@
 name: opencode-fork-smoke
 
 on:
+  push:
+    branches: [pin-opencode-fork]
   workflow_dispatch:
 
 permissions:
