@@ -67,11 +67,27 @@ jobs:
 
       # Бинарь ставится до создания идентичности и делается world-readable, чтобы
       # агент мог его исполнить под своим UID, но не мог переписать.
-      - name: Install opencode
+      - name: Install pinned OpenCode fork
+        env:
+          OPENCODE_RELEASE_TAG: mem-preview-20261013-d8cdc0166446
+          OPENCODE_VERSION: 0.0.0-mem-preview.d8cdc0166446
+          OPENCODE_SOURCE_SHA: d8cdc0166446e19b51ab56e23980b00cf33e5f73
+          OPENCODE_ARCHIVE_SHA256: 5c15dcfcb0c20c49fa89809ab479fae8c99774c382ef6d200a98bfc61190ea75
+          OPENCODE_BINARY_SHA256: db778e43c0657c854c43fbc6d65a48dc9cbc50af86cc006fa77efe9cc86aee74
         run: |
           set -euo pipefail
-          npm install -g opencode-ai --no-audit --no-fund
-          sudo chmod -R a+rX "$(npm root -g)"
+          asset="opencode-linux-x64.tar.gz"
+          url="https://github.com/gpt-mem/opencode-mem/releases/download/${OPENCODE_RELEASE_TAG}/${asset}"
+          curl --fail --location --silent --show-error "$url" --output "$RUNNER_TEMP/$asset"
+          echo "$OPENCODE_ARCHIVE_SHA256  $RUNNER_TEMP/$asset" | sha256sum --check --status
+          mkdir -p "$RUNNER_TEMP/opencode-fork"
+          tar -xzf "$RUNNER_TEMP/$asset" -C "$RUNNER_TEMP/opencode-fork"
+          test -x "$RUNNER_TEMP/opencode-fork/opencode"
+          echo "$OPENCODE_BINARY_SHA256  $RUNNER_TEMP/opencode-fork/opencode" | sha256sum --check --status
+          sudo install -o root -g root -m 0755 "$RUNNER_TEMP/opencode-fork/opencode" /usr/local/bin/opencode
+          version="$(opencode --version)"
+          test "$version" = "$OPENCODE_VERSION"
+          echo "::notice title=OpenCode fork::version=$version source=$OPENCODE_SOURCE_SHA sha256=$OPENCODE_BINARY_SHA256"
           opencode --version
 
       - name: Run agent
