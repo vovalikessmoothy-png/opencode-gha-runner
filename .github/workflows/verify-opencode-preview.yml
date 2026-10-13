@@ -16,9 +16,9 @@ jobs:
     steps:
       - name: Download pinned OpenCode MEM preview
         env:
-          OPENCODE_PREVIEW_TAG: mem-preview-20261013-a6c8f6632c9b
-          OPENCODE_PREVIEW_VERSION: 0.0.0-mem-preview.a6c8f6632c9b
-          OPENCODE_PREVIEW_SHA256: cf7b44cae53a5f3c6b9341690bfe94d1341b562a6179fe552987163fe963d6e5
+          OPENCODE_PREVIEW_TAG: mem-preview-20261013-semver-aedf7fb77570
+          OPENCODE_PREVIEW_VERSION: 1.18.34
+          OPENCODE_PREVIEW_SHA256: bfd79068ce5a1c6ed75c6a82b7b0defbeaa3061afbf625691a7d134553f33eec
         run: |
           set -euo pipefail
           binary="$RUNNER_TEMP/opencode"
