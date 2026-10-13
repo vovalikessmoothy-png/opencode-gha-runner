@@ -14,11 +14,11 @@ jobs:
     steps:
       - name: Download and verify pinned OpenCode fork
         env:
-          OPENCODE_RELEASE_TAG: mem-v20261013-native-trace-af4e69c4be1e
-          OPENCODE_VERSION: 0.0.0-native-trace-af4e69c4be1e-20261013
-          OPENCODE_SOURCE_SHA: af4e69c4be1e4e36bc510cc6b1083571db4a4868
-          OPENCODE_ARCHIVE_SHA256: 7b7b57a1c8762f6735f2d794c1a455dbdd4d83b5af9cd0532eba49337570d5b3
-          OPENCODE_BINARY_SHA256: 1bed8883499b6e370208cf948b84c90a74369c934c566dab1deb501ef1cbea3d
+          OPENCODE_RELEASE_TAG: mem-preview-20261013-d8cdc0166446
+          OPENCODE_VERSION: 0.0.0-mem-preview.d8cdc0166446
+          OPENCODE_SOURCE_SHA: d8cdc0166446e19b51ab56e23980b00cf33e5f73
+          OPENCODE_ARCHIVE_SHA256: 5c15dcfcb0c20c49fa89809ab479fae8c99774c382ef6d200a98bfc61190ea75
+          OPENCODE_BINARY_SHA256: db778e43c0657c854c43fbc6d65a48dc9cbc50af86cc006fa77efe9cc86aee74
         run: |
           set -euo pipefail
           asset="opencode-linux-x64.tar.gz"
