@@ -1,0 +1,30 @@
+name: verify-opencode-preview
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/run-agent.yml
+      - .github/workflows/verify-opencode-preview.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-linux-binary:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download pinned OpenCode MEM preview
+        env:
+          OPENCODE_PREVIEW_TAG: mem-preview-20261013-semver-aedf7fb77570
+          OPENCODE_PREVIEW_VERSION: 1.18.34
+          OPENCODE_PREVIEW_SHA256: bfd79068ce5a1c6ed75c6a82b7b0defbeaa3061afbf625691a7d134553f33eec
+        run: |
+          set -euo pipefail
+          binary="$RUNNER_TEMP/opencode"
+          curl --fail --location --retry 3 --retry-delay 1 \
+            "https://github.com/gpt-mem/opencode-mem/releases/download/${OPENCODE_PREVIEW_TAG}/opencode-linux-x64" \
+            --output "$binary"
+          echo "${OPENCODE_PREVIEW_SHA256}  ${binary}" | sha256sum --check
+          chmod 0755 "$binary"
+          test "$("$binary" --version)" = "$OPENCODE_PREVIEW_VERSION"
