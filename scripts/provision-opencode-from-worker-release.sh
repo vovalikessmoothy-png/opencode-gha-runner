@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo='trained-assist/ai-agent-runner'
-release_tag="${WORKER_RELEASE_TAG:-vm-worker-v0.3.13}"
+release_tag="${WORKER_RELEASE_TAG:-vm-worker-v0.3.14}"
 archive_name='ai-agent-vm-worker-linux-x64.tar.gz'
 signer_workflow="$repo/.github/workflows/vm-worker-release.yml"
 tmp_root="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"

@@ -70,7 +70,7 @@ jobs:
       - name: Install pinned OpenCode fork
         env:
           GH_TOKEN: ${{ github.token }}
-          WORKER_RELEASE_TAG: vm-worker-v0.3.13
+          WORKER_RELEASE_TAG: vm-worker-v0.3.14
         run: bash scripts/provision-opencode-from-worker-release.sh
 
       - name: Run agent
