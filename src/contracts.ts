@@ -227,6 +227,7 @@ export interface LaunchResult {
    * «коммита нет», а не выдуманный хэш.
    */
   repo: { fullName: string; branch: string; commit: string; baseRef?: string };
+  /** Publication is independent of process execution: `failed` means finalization failed. */
   publicationOutcome?: 'published' | 'not_requested' | 'failed';
   /** Files uploaded to the API's run-scoped profile saveback endpoint. */
   profileChanges?: { files: Array<{ path: string; sha256: string; size: number }>; deletes: string[] };
