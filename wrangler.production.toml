@@ -1,0 +1,27 @@
+name = "opencode-gha-runner-gateway"
+account_id = "d740a05e9442c1d0feacae2dfc673e93"
+main = "dist/src/worker.js"
+compatibility_date = "2024-12-30"
+workers_dev = true
+
+[[kv_namespaces]]
+binding = "RUNS"
+id = "c1eb5647663b429f8f1e913b5353bd55"
+
+[[d1_databases]]
+binding = "RUN_DB"
+database_name = "opencode-gha-runner-gateway-state"
+database_id = "__RUN_DB_ID__"
+migrations_dir = "migrations"
+
+[vars]
+GITHUB_REPO = "vovalikessmoothy-png/opencode-gha-runner"
+GITHUB_WORKFLOW = "run-agent.yml"
+PUBLIC_BASE_URL = "https://opencode-gha-runner-gateway.skillset-apply.workers.dev"
+AGENT_BINARY = "opencode"
+
+[observability]
+enabled = true
+
+[triggers]
+crons = ["*/5 * * * *"]
