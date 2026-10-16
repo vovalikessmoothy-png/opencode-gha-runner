@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .wrangler/
+wrangler.production.generated.toml
 .dev.vars
 *.log
 .env

@@ -36,7 +36,7 @@ credential через `GH_TOKEN`, не подставляй токен в арг
   release и передаётся запуску через claim. Не закрепляй локальный бинарь и не обновляй
   его вручную на отдельном runner.
 - Адреса Workers, execution-repository allowlist, gateway credentials и bindings
-  принадлежат sandbox/provisioning-конфигурации в `ai-agent-runner` и Cloudflare. Меняй
+  принадлежат sandbox/production deploy-конфигурации в `ai-agent-runner` и Cloudflare. Меняй
   их через проверенный provisioning/deploy workflow из исходного репозитория. GHA gateway
   sandbox разворачивается workflow `Deploy GHA gateway sandbox` в `ai-agent-runner`; он
   проверяет gateway source SHA через `/version`. Не правь
@@ -68,7 +68,7 @@ gateway component probe, not full Agent API/profile end-to-end acceptance.
 
 ### Gateway run state
 
-The sandbox gateway uses the dedicated Cloudflare D1 database
+Both gateway environments use D1 for new run state. The sandbox gateway uses the dedicated Cloudflare D1 database
 `opencode-gha-runner-gateway-sandbox-state` through the `RUN_DB` binding. Apply its
 versioned schema from `migrations/` before deploying. `gateway_runs` is the current
 projection keyed by `run_id`; it also indexes `user_task_id`, unique `operation_id`,
@@ -84,8 +84,14 @@ result only if the runner has not claimed that run. Queued runs are recovered on
 the exact `gateway-run:<runId>` workflow display title; GitHub's time-window guesses are
 not used. Terminal projections expire after six
 hours, matching the previous KV retention; their sanitized identity events remain, and
-ambiguous active runs are never expired by age. Production still uses its existing KV
-binding; enabling D1 there is a separate reviewed migration.
+ambiguous active runs are never expired by age. Production keeps its existing `RUNS` KV
+binding for ring cache and legacy runs. The `Deploy GHA gateway to production` workflow in
+`ai-agent-runner` provisions or reuses the named production D1 database, applies these
+migrations, deploys the production D1 binding, and enables the same five-minute
+reconciliation schedule. It requires a successful sandbox deploy run and checks that the
+sandbox `/version` endpoint currently serves the exact gateway commit before using
+production credentials. Existing KV runs remain readable and reconcilable during their TTL;
+they are not bulk-copied or deleted.
 
 Внешний воркер Serverless Agent API: принимает `POST /v1/launch`, поднимает одноразовую
 джобу в GitHub Actions, запускает в ней агента opencode и возвращает результат в формате
