@@ -666,6 +666,41 @@ test('агент не создал объявленные выходы — эт�
   assert.match(result!.safeSummary, /report\.md/);
 });
 
+test('real artifact push failure is reported independently from successful execution', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'oga-publish-denied-'));
+  const log = new SessionLog();
+  await log.open(path.join(root, 'session.log'), '# run\n');
+  const baseFetch = githubApiMock([]);
+  const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+    if (String(url).endsWith('/git/refs')) {
+      return new Response(JSON.stringify({ message: 'Resource not accessible by integration' }), { status: 403 });
+    }
+    return baseFetch(url, init);
+  }) as typeof fetch;
+  try {
+    const published = await publishArtifacts({
+      spec: validLaunchRequest({ runId: 'run_1', repository: { fullName: 'owner/name', branch: 'agent-run/run_1' } }) as unknown as LaunchRequest,
+      runId: 'run_1', workspace: root, token: 'ghp_test_token_value',
+      collected: { artifacts: [], missing: [], undeclared: [] },
+      outcome: { exitCode: 0, exitSignal: null, exitReason: 'completed', stdout: '', stderr: '', durationMs: 1, timedOut: false, outputTruncated: false },
+      startedAt: new Date(), sessionLog: log, fetchImpl,
+    });
+    assert.match(published.note ?? '', /artifact push failed: could not create branch/);
+    assert.equal(failureForOutcome('completed', [], published.note)?.code, 'ARTIFACTS_PUSH_FAILED');
+    const result = buildLaunchResult({
+      runId: 'run_1',
+      outcome: { exitCode: 0, exitSignal: null, exitReason: 'completed', stdout: '', stderr: '', durationMs: 1, timedOut: false, outputTruncated: false },
+      answer: { source: null }, artifacts: published.artifactRefs, repo: published.repo, logUrl: '', outputTruncated: false,
+      publicationOutcome: 'failed', failure: failureForOutcome('completed', [], published.note),
+    });
+    assert.equal(result.exitReason, 'completed');
+    assert.equal(result.publicationOutcome, 'failed');
+    assert.equal(result.failure?.code, 'ARTIFACTS_PUSH_FAILED');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('всё сложилось: отказа нет', () => {
   assert.equal(failureForOutcome('completed', [], null), undefined);
 });

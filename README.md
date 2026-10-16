@@ -143,6 +143,15 @@ publication token, профильный GCS bucket и GCS write identity это�
 [`docs/PROFILE-SAVEBACK-TESTING.md`](docs/PROFILE-SAVEBACK-TESTING.md).
 Правила исключения профиля применяются даже если агент меняет `.gitignore`.
 
+For read-only text runs, `publicationMode: "none"` skips repository writes while retaining
+the repository credential needed for checkout. This mode is rejected when outputs or profile
+saveback are declared. `publicationOutcome` is independent of the agent's execution result:
+`not_requested` is successful finalization when publication was intentionally skipped,
+`published` means the requested save completed, and `failed` means finalization failed even
+if the agent itself completed successfully. The API reports an artifact publication failure
+as a run failure; overall success requires successful execution and no failed requested
+publication.
+
 ## Почему ключ LLM не едет в `workflow_dispatch`
 
 `workflow_dispatch` публичного репозитория показывает `inputs` в метаданных прогона и в
