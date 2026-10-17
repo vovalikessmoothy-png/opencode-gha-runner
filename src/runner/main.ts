@@ -633,7 +633,9 @@ export async function main(env: RunnerEnv = process.env as unknown as RunnerEnv)
         logLine(`mcp preflight diagnostic=${diagnostic}`);
       }
     }
-    const extraArgs = (env.AGENT_ARGS ?? '').split(' ').filter(Boolean);
+    const extraArgs = (env.AGENT_ARGS && env.AGENT_ARGS.trim().length > 0)
+      ? env.AGENT_ARGS.split(' ').filter(Boolean)
+      : ['--pure', '-m', 'ladder/free'];
     const agentArgs = [...extraArgs, 'run', spec.input.inlinePrompt];
     // Промпт в лог не пишем: он может содержать секреты, а лог уезжает в GCS.
     sessionLog.append('stdout', `\n$ ${claim.agentBinary} ${extraArgs.join(' ')} run <prompt>\n`);
