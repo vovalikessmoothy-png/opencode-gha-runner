@@ -9,21 +9,51 @@
         "apiKey": "{env:LLM_LADDER_TOKEN}"
       },
       "models": {
-        "free": { "name": "ladder free" },
-        "free:plan": { "name": "ladder free:plan" },
-        "free:explore": { "name": "ladder free:explore" },
-        "free:general": { "name": "ladder free:general" },
-        "free:review": { "name": "ladder free:review" },
-        "service": { "name": "ladder service (free-first)" },
-        "service:general": { "name": "ladder service:general" },
-        "service:plan": { "name": "ladder service:plan" },
-        "service:explore": { "name": "ladder service:explore" },
-        "service:review": { "name": "ladder service:review" },
-        "doctor": { "name": "ladder doctor (strongest)" },
-        "doctor:plan": { "name": "ladder doctor:plan" },
-        "doctor:explore": { "name": "ladder doctor:explore" },
-        "doctor:general": { "name": "ladder doctor:general" },
-        "doctor:review": { "name": "ladder doctor:review" }
+        "free": {
+          "name": "ladder free"
+        },
+        "free:plan": {
+          "name": "ladder free:plan"
+        },
+        "free:explore": {
+          "name": "ladder free:explore"
+        },
+        "free:general": {
+          "name": "ladder free:general"
+        },
+        "free:review": {
+          "name": "ladder free:review"
+        },
+        "service": {
+          "name": "ladder service (free-first)"
+        },
+        "service:general": {
+          "name": "ladder service:general"
+        },
+        "service:plan": {
+          "name": "ladder service:plan"
+        },
+        "service:explore": {
+          "name": "ladder service:explore"
+        },
+        "service:review": {
+          "name": "ladder service:review"
+        },
+        "doctor": {
+          "name": "ladder doctor (strongest)"
+        },
+        "doctor:plan": {
+          "name": "ladder doctor:plan"
+        },
+        "doctor:explore": {
+          "name": "ladder doctor:explore"
+        },
+        "doctor:general": {
+          "name": "ladder doctor:general"
+        },
+        "doctor:review": {
+          "name": "ladder doctor:review"
+        }
       }
     }
   },
@@ -31,5 +61,6 @@
     "edit": "allow",
     "bash": "allow",
     "webfetch": "allow"
-  }
+  },
+  "model": "ladder/free"
 }
